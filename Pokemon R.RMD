@@ -23,26 +23,59 @@ library(earth)
 ```{r}
 
 Pokemon=read.csv("Pokemon.csv")
+pairs(Pokemon[,34:ncol(Pokemon)])
+Pokemon$capture_rate=scale(as.integer(Pokemon$capture_rate))
 #Pokemon$type2[is.na(Pokemon$type2)]="none"
 levels(Pokemon$type2)=c(levels(Pokemon$type2),"none")
 Pokemon$type2[Pokemon$type2==""]="none"
+Pokemon$generation=as.factor(Pokemon$generation)
+Pokemon$percentage_male[is.na(Pokemon$percentage_male)]=0
+Pokemon$base_happiness=scale(Pokemon$base_happiness)
+Pokemon$base_egg_steps=scale(Pokemon$base_egg_steps)
+Pokemon$experience_growth=scale(Pokemon$experience_growth)
+Pokemon$weight_kg=scale(Pokemon$weight_kg)
+Pokemon$height_m=scale(Pokemon$height_m)
+
+
 
 Num_Col=c(26:29,32,34,35,36,37,39:41)
 Pokemon_Cor=Pokemon[,Num_Col]
 Pokemon_Cor$type1=as.numeric(Pokemon$type1)
 
 
-corrplot(cor(Pokemon_Cor))
+corrplot(cor(complete.cases(Pokemon_Cor)))
 
 summary(Pokemon_Cor)
+
 ```
 
 
 ```{r}
-model=earth(defense~is_legendary+generation+percentage_male+weight_kg+height_m+experience_growth+speed,Pokemon[complete.cases(Pokemon),])
-model=earth(defense~type1+type2+weight_kg+height_m,Pokemon[complete.cases(Pokemon),])
+#https://bradleyboehmke.github.io/HOML/mars.html
+#Pokemon=Pokemon[,colnames(Pokemon)!="sp_attack"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="sp_defense"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="attack"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="hp"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="defense"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="base_total"]
+Pokemon=Pokemon[,colnames(Pokemon)!="abilities"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="base_total"]
+Pokemon=Pokemon[,colnames(Pokemon)!="classfication"]
+Pokemon=Pokemon[,colnames(Pokemon)!="japanese_name"]
+Pokemon=Pokemon[,colnames(Pokemon)!="name"]
+Pokemon=Pokemon[,colnames(Pokemon)!="pokedex_number"]
+#Pokemon$perAtt=Pokemon$attack/Pokemon$base_total
+#model=earth(defense~is_legendary+generation+percentage_male+weight_kg+height_m+experience_growth+speed,Pokemon[complete.cases(Pokemon),])
+model=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1])
+
+model=step(lm(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1]))
+#model=earth(perAtt~type1*type2+height_m*weight_kg+is_legendary,Pokemon[complete.cases(Pokemon),-1])
 #expand.bpairs(type1~defense,Pokemon[complete.cases(Pokemon),])
+#model=earth(attack~.^2,Pokemon[complete.cases(Pokemon),-1])
 summary(model)
-plotmo(model)
+#plotmo(model)
+#plot(model)
+#View(Pokemon[complete.cases(Pokemon),])
 ```
 
+Reasonable  R^2 when calculating total, bad when stratified by exact stat.  We could treat it as a missing data problem and predict one at a time based on best stat.
