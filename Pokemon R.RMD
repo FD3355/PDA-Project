@@ -23,18 +23,30 @@ library(earth)
 ```{r}
 
 Pokemon=read.csv("Pokemon.csv")
-pairs(Pokemon[,34:ncol(Pokemon)])
+#pairs(Pokemon[,34:ncol(Pokemon)])
 Pokemon$capture_rate=scale(as.integer(Pokemon$capture_rate))
 #Pokemon$type2[is.na(Pokemon$type2)]="none"
 levels(Pokemon$type2)=c(levels(Pokemon$type2),"none")
 Pokemon$type2[Pokemon$type2==""]="none"
 Pokemon$generation=as.factor(Pokemon$generation)
+
+#pairs(Pokemon[,34:ncol(Pokemon)])
+pairs(Pokemon[,c("base_total","weight_kg","height_m",  "percentage_male","base_happiness","base_egg_steps","experience_growth")])
 Pokemon$percentage_male[is.na(Pokemon$percentage_male)]=0
-Pokemon$base_happiness=scale(Pokemon$base_happiness)
-Pokemon$base_egg_steps=scale(Pokemon$base_egg_steps)
-Pokemon$experience_growth=scale(Pokemon$experience_growth)
-Pokemon$weight_kg=scale(Pokemon$weight_kg)
-Pokemon$height_m=scale(Pokemon$height_m)
+Pokemon$base_happiness=c(scale(Pokemon$base_happiness))
+Pokemon$base_egg_steps=c(scale(Pokemon$base_egg_steps))
+Pokemon$experience_growth=c(scale(Pokemon$experience_growth))
+
+Pokemon$weight_kg=c(scale(Pokemon$weight_kg))
+Pokemon$height_m=c(scale(Pokemon$height_m))
+#pairs(Pokemon[,34:ncol(Pokemon)])
+pairs(Pokemon[,c("base_total","weight_kg","height_m",  "percentage_male","base_happiness","base_egg_steps","experience_growth")])
+#Pokemon$base_happiness=1/(Pokemon$base_happiness)
+#Pokemon$base_egg_steps=1/(Pokemon$base_egg_steps)
+#Pokemon$experience_growth=1/(Pokemon$experience_growth)
+#Pokemon$weight_kg=1/(Pokemon$weight_kg)
+#Pokemon$height_m=1/(Pokemon$height_m)
+
 
 
 
@@ -43,12 +55,24 @@ Pokemon_Cor=Pokemon[,Num_Col]
 Pokemon_Cor$type1=as.numeric(Pokemon$type1)
 
 
-corrplot(cor(complete.cases(Pokemon_Cor)))
+#corrplot(cor(complete.cases(Pokemon_Cor)))
 
-summary(Pokemon_Cor)
+#summary(Pokemon_Cor)
 
 ```
 
+```{r}
+
+Pokemon=read.csv("Pokemon.csv")
+#pairs(Pokemon[,34:ncol(Pokemon)])
+Pokemon$capture_rate=scale(as.integer(Pokemon$capture_rate))
+#Pokemon$type2[is.na(Pokemon$type2)]="none"
+levels(Pokemon$type2)=c(levels(Pokemon$type2),"none")
+Pokemon$type2[Pokemon$type2==""]="none"
+Pokemon$generation=as.factor(Pokemon$generation)
+
+unique(Pokemon$percentage_male)
+```
 
 ```{r}
 #https://bradleyboehmke.github.io/HOML/mars.html
@@ -58,24 +82,257 @@ summary(Pokemon_Cor)
 #Pokemon=Pokemon[,colnames(Pokemon)!="hp"]
 #Pokemon=Pokemon[,colnames(Pokemon)!="defense"]
 #Pokemon=Pokemon[,colnames(Pokemon)!="base_total"]
-Pokemon=Pokemon[,colnames(Pokemon)!="abilities"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="abilities"]
 #Pokemon=Pokemon[,colnames(Pokemon)!="base_total"]
-Pokemon=Pokemon[,colnames(Pokemon)!="classfication"]
-Pokemon=Pokemon[,colnames(Pokemon)!="japanese_name"]
-Pokemon=Pokemon[,colnames(Pokemon)!="name"]
-Pokemon=Pokemon[,colnames(Pokemon)!="pokedex_number"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="classfication"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="japanese_name"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="name"]
+#Pokemon=Pokemon[,colnames(Pokemon)!="pokedex_number"]
 #Pokemon$perAtt=Pokemon$attack/Pokemon$base_total
 #model=earth(defense~is_legendary+generation+percentage_male+weight_kg+height_m+experience_growth+speed,Pokemon[complete.cases(Pokemon),])
-model=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1])
+model_base_only=earth(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=5, ncross=3, varmod.method="lm")
+Predict_model_base_only=predict(model_base_only,interval="pint")
 
-model=step(lm(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1]))
+#model=step(lm(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1]))
 #model=earth(perAtt~type1*type2+height_m*weight_kg+is_legendary,Pokemon[complete.cases(Pokemon),-1])
 #expand.bpairs(type1~defense,Pokemon[complete.cases(Pokemon),])
 #model=earth(attack~.^2,Pokemon[complete.cases(Pokemon),-1])
 summary(model)
-#plotmo(model)
-#plot(model)
+plotmo(model)
+plot(model)
+
+Pokemon_Complete$Pred_Base_only<-Predict_model_base_only$fit
 #View(Pokemon[complete.cases(Pokemon),])
 ```
 
 Reasonable  R^2 when calculating total, bad when stratified by exact stat.  We could treat it as a missing data problem and predict one at a time based on best stat.
+
+
+```{r}
+#With base
+model_attack=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_attack)
+paste("attack: ",sum_mod$rsq)
+
+model_hp=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_hp)
+paste("hp: ",sum_mod$rsq)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_sp_attack=earth(sp_attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_sp_attack)
+paste("sp_attack: ",sum_mod$rsq)
+
+model_sp_defense=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_sp_defense)
+paste("sp_defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+base_total,Pokemon[complete.cases(Pokemon),-1])
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+```{r}
+#Without base
+model_attack=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_attack)
+paste("attack: ",sum_mod$rsq)
+
+model_hp=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_hp)
+paste("hp: ",sum_mod$rsq)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_sp_attack=earth(sp_attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_sp_attack)
+paste("sp_attack: ",sum_mod$rsq)
+
+model_sp_defense=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_sp_defense)
+paste("sp_defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate,Pokemon[complete.cases(Pokemon),-1], nfold=10, ncross=30, varmod.method="lm")
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+We've taken HP and will include in in our models:
+
+```{r}
+Predict_model_hp=predict(model_hp,interval="pint")
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_HP),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_base_order=Predict_model_base[order(Predict_model_base$fit),]
+
+ggplot(Pokemon_Complete_order, aes(index, Pred_base))+
+    geom_point()+
+    geom_point(aes(y = base_total, colour=ifelse(base_total<Predict_model_base_order$lwr |
+                                            base_total>Predict_model_base_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_base_order$lwr,ymax=Predict_model_base_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted total")+
+  ylab("Total Stats") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+```{r}
+Pokemon_Complete=Pokemon[complete.cases(Pokemon),]
+Pokemon_Complete$Pred_HP<-predict(model_hp)
+
+model_attack=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP,Pokemon_Complete)
+sum_mod=summary(model_attack)
+paste("attack: ",sum_mod$rsq)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP,Pokemon_Complete)
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_sp_attack=earth(sp_attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP,Pokemon_Complete)
+sum_mod=summary(model_sp_attack)
+paste("sp_attack: ",sum_mod$rsq)
+
+model_sp_defense=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP,Pokemon_Complete)
+sum_mod=summary(model_sp_defense)
+paste("sp_defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP,Pokemon_Complete)
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+Attack is the next highest:
+
+```{r}
+Pokemon_Complete$Pred_Attack<-predict(model_attack)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack,Pokemon_Complete)
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_sp_defense=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack,Pokemon_Complete)
+sum_mod=summary(model_sp_defense)
+paste("sp_defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack,Pokemon_Complete)
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+Now we'll take special attack:
+
+```{r}
+Pokemon_Complete$Pred_SP_Attack<-predict(model_sp_attack)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack,Pokemon_Complete)
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_sp_defense=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack,Pokemon_Complete)
+sum_mod=summary(model_sp_defense)
+paste("sp_defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack,Pokemon_Complete)
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+Now we'll take special defense:
+
+```{r}
+Pokemon_Complete$Pred_SP_Defense<-predict(model_sp_defense)
+
+model_defense=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack+Pred_SP_Defense,Pokemon_Complete)
+sum_mod=summary(model_defense)
+paste("defense: ",sum_mod$rsq)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack+Pred_SP_Defense,Pokemon_Complete)
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+```
+
+Finally defense to find speed:
+
+```{r}
+Pokemon_Complete$Pred_defense<-predict(model_defense)
+
+model_speed=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack+Pred_SP_Defense+Pred_defense,Pokemon_Complete, nfold=10, ncross=30, varmod.method="lm")
+Predict_model_base=predict(model_speed,interval="pint")
+
+sum_mod=summary(model_speed)
+paste("speed: ",sum_mod$rsq)
+
+model_base=earth(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+base_egg_steps*capture_rate+base_happiness+capture_rate+Pred_HP+Pred_Attack+Pred_SP_Attack+Pred_SP_Defense+Pred_defense,Pokemon_Complete, nfold=10, ncross=30, varmod.method="lm", keepxy=TRUE)
+Predict_model_base=predict(model_base,interval="pint")
+sum_mod=summary(model_base)
+paste("base: ",sum_mod$rsq)
+mean(model_base$cv.rsq.tab[model_base$cv.rsq.tab[,1]>0])
+sum(model_base$cv.rsq.tab[,1]<0)/length(model_base$cv.rsq.tab[,1])
+```
+
+Note that about 5% of our total $R^2$ values are erronous.
+
+```{r}
+Pokemon_Complete$Pred_base<-predict(model_base)
+Pokemon_Complete$Pred_speed<-Pokemon_Complete$Pred_base-Pokemon_Complete$Pred_HP-Pokemon_Complete$Pred_Attack-Pokemon_Complete$Pred_SP_Attack-Pokemon_Complete$Pred_SP_Defense-Pokemon_Complete$Pred_defense
+```
+
+```{r}
+#Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_base),]
+#Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+#plot(Pokemon_Complete_order$Pred_base)
+#points(Pokemon_Complete_order$base_total,col="red")
+
+#Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_BaseOnly),]
+#plot(Pokemon_Complete_order$Pred_BaseOnly)
+#points(Pokemon_Complete_order$base_total,col="red")
+
+
+
+
+#Predict_model_base_only
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_Base_only),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_base_order=Predict_model_base_only[order(Predict_model_base_only$fit),]
+
+ggplot(Pokemon_Complete_order, aes(index, Pred_Base_only))+
+    geom_point()+
+    geom_point(aes(y = base_total, colour = "red"))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_base_order$lwr,ymax=Predict_model_base_order$upr),alpha=0.3)
+
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_base),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_base_order=Predict_model_base[order(Predict_model_base$fit),]
+
+ggplot(Pokemon_Complete_order, aes(index, Pred_base))+
+    geom_point()+
+    geom_point(aes(y = base_total, colour=ifelse(base_total<Predict_model_base_order$lwr |
+                                            base_total>Predict_model_base_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_base_order$lwr,ymax=Predict_model_base_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted total")+
+  ylab("Total Stats") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#Predict_model_base_only$fit[1:10]
+#Predict_model_base$fit[1:10]
+
+```
+
+```{r}
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_speed),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+
+ggplot(Pokemon_Complete_order, aes(index, Pred_speed))+
+    geom_point(aes(y = speed))+
+    geom_line(data=Pokemon_Complete_order)+
+  ylab("Total Stats") + ggtitle("Predictions and True Values")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
