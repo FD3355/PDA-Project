@@ -1,0 +1,58 @@
+---
+title: "Title"
+date: "December 12, 2019"
+author: "Frank G DeVone"
+header-includes: \usepackage{graphicx,wrapfig,blindtext,setspace}\doublespacing 
+  
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+  
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Non-linear methods allow us to view 
+
+# Background
+
+Our dataset contains data on the eight hundred and one Pokémon species that were know prior to November 2019.  A “Generation” of Pokémon refers to the games in the series.  The original one hundred and one Pokémon were from the first series of games released in 1993.   When the sequels to those games were released, they introduced an additional one hundred Pokémon.  This pattern continues up until generation 8 with the amount of Pokémon added varying from game to game.  We elect to exclude the most recent generation, as information on that generation has yet to be reliably compiled.  The purpose of the game is both the collection of all available Pokémon, working your way through the story and world with them, and using them in a turn-based battle system against the environment, other players, and computer-controlled opponents.  Pokémon have ‘stats’ that determine their effectiveness in these battles and react with the ‘stats’ of the opposing Pokémon.  Attack deals physical damage and is mitigated by the opposing Pokémon’s defense.  Special attack deals special damage (think flames and electricity) and is mitigated by the opposing Pokémon’s special defense.   Damage is dealt to a Pokémon’s hp (health points) and Pokémon can no longer participate in battle when hp reaches zero.  The final ‘stat’ is speed, the Pokémon with the highest speed attacks first.   These six stats add up to a Pokémon’s “Total Stats” which with be the initial focus of our analysis as we attempt to predict it with the Pokémon’s other characteristics.  Within the games themselves these stats are calculated with the following:
+
+(2)
+
+(3)
+
+‘Base’ as listed above are consistent across all Pokémon of the same species.  However, IVs, EVs, nature, and level are characteristics the individual Pokémon is “born” with or can be trained by the player.  As such our focus will only be on the base stat for a Pokémon species.  There are additional characteristics that are consistent across Pokémon species, and we’re using these as our potential covariates.   The only ones related to real world comparisons are height and weight.  Additional characteristics are fictional and will have to be explained.   Understanding these characteristics is not critical to our model as we focus mostly on prediction, however their descriptions will be listed below:
+
+\underline{Generation}:  As previously mentioned we are observing 8 generations of Pokémon.  Conveniently each generation happens on a different “region” in the game’s fictional world.  As such I’m choosing to include it as a categorical variable as an indicator of the Pokémon species’ region of origin.
+
+\underline{Typing}:  There are 18 Pokémon types that a Pokémon.  It is possible for them to have a single type, or two types, but no more then that.  Note figure n for the listed types and some examples of Pokémon that fit certain paradigms.  These interact with the attacks a Pokémon can learn which are also typed.  For example, the electric type move thunderbolt will deal two times the damage to a Pokémon with water typing but will only deal half damage to Pokémon with rock typing.  In addition, if the Pokémon that used the move is an electric type it will deal one and a half times more damage.  When a Pokémon has two types one is listed first; but from a gameplay prospective there is no difference between the two.  Regardless we’ll include the first as “type 1” and the second as “type 2.”  We also create an additional “type 2” as “none” for Pokémon with only a primary typing.
+
+
+\par
+\begin{wrapfigure}[15]{R}[0\width]{6cm}
+\includegraphics[width=0.50\textwidth]{Picture1.png}
+\caption{Pokémon Types}
+\end{wrapfigure}
+
+
+\underline{Legendary Status}:  Some Pokémon are designated as legendary and are designed to have greater stats then normal.  As such we make a binary variable to indicate if a given Pokémon species is legendary.
+Evolution:  For some Pokémon species; when certain conditions are met, Pokémon can evolve into (usually) strictly better versions of themselves.  To measure this phenomenon, we created a numerical variable.  A fully evolved Pokémon will be three, a Pokémon that can evolve once will be two, and a Pokémon that can evolve two more times will be one.  Like legendries, there are ‘baby’ Pokémon that are inherently designed to be weaker and must be evolved in order to reach their potential, these are given a 0.
+
+\underline{Base Egg Steps}:  Within the game you can receive eggs that, given time, will hatch into Pokémon.  Time is judged by how many in game steps the player makes, when the threshold is met the egg will hatch.  This is consistent across Pokémon species.
+Base Happiness:  Individual Pokémon have happiness levels that increase and decrease dependent on player actions.  However, each species has a baseline level of happiness they begin with. 
+
+\underline{Experience Growth}: Recall in Equation n the “level” component.   This is a value increased as a Pokémon is used in battle.  However, the amount of experience required to increase “level” varies between Pokémon species, typically with stronger Pokémon taking longer to level up.   
+
+\underline{Capture Rate}: There are several in game factors when attempting to capture a 'wild' Pokémon; however each has a default capture rate under the games' baseline conditions. Like experience the capture raite varies between Pokémon species, typically with stronger Pokémon being harder to capture.  
+
+
+
