@@ -1,0 +1,750 @@
+---
+title: "Determining Pokemon Statistics with MARS"
+date: "December 17, 2019"
+author: "Frank G DeVone"
+header-includes: \usepackage{graphicx,wrapfig,blindtext,setspace,mathtools}\doublespacing 
+  
+output:
+  
+  pdf_document: 
+    fig_caption: yes
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+#library(lme5)
+library(effects)
+library(corrplot)
+library(knitr)
+library(ggplot2)
+#install.packages('pROC')
+library(pROC)
+library(MASS)
+library(class)
+#library(klaR)
+#install.packages('earth')
+library(earth)
+#install.packages('tinytex')
+#library(tinytex)
+#tinytex::install_tinytex()
+# to uninstall TinyTeX, run tinytex::uninstall_tinytex() 
+require(gridExtra)
+pdf.options(useDingbats = TRUE)
+```
+
+# Introduction
+
+Non-linear functions allow us to examine non-linear relationships between our variables within the framework of traditional linear regression.  We will focus in this analysis on MARS (Multivariate Adaptive Regression Splines), which produces splines in a step-wise matter.  To test this method we observe the Pokémon dataset compiled on Kaggle [2].  Pokémon is a video game series that's been ongoing since 1993, and contains pre-constructed and artificial statistics on each of its 801 imaginary creatures.  This dataset full of designed relationships is a fun and useful, and wewill use it to demonstrate the MARS method.
+
+# MARS Background
+
+Multivariate Adaptive Regression Splines functionally work in a similar manner to traditional splines.  Note figure 1 [1]; we form our splines around knots at point t.   We can represent this in the basis functions:
+
+(1) \[ (x-t)_+ = \begin{cases} 
+      x-t & \textrm{ if x>t} \\
+      0 & \textrm{ otherwise} \\
+   \end{cases} \]
+
+(2) \[ (t-x)_+ = \begin{cases} 
+      t-x & \textrm{ if x<t} \\
+      0 & \textrm{ otherwise} \\
+   \end{cases} \]
+
+\par
+\begin{wrapfigure}[8]{R}[0\width]{6cm}
+\includegraphics[width=0.50\textwidth]{Knots.png}
+\caption{Knots}
+\end{wrapfigure}
+
+The key feature of MARS is that in addition to acting as a traditional covariate step-wise it also tests different values of t for possible splines.  It accomplishes this through two passes of the data:
+
+\underline{The Forward Pass}:  This part is similar to our traditional forward step-wise regression, only in addition to new and existing terms it also considers possible basis functions or a product of two.  We begin with just the intercept and we then add terms in an attempt to minimize the residual sum-of-squares.  Note that this pass alone creates a large model that is prone to over fitting.
+
+\underline{The Backward Pass}: After the forward pass is done we begin deleting terms based on the smallest increases in residual squared error when we do so.  Where we define $\lambda$ as the number of predictors in the model, we create a best fitting model for each possible value of $\lambda$; from the intercept model to the full number of terms found in the forward pass.  Once that process is complete we select the value of $\lambda$ via a generalized cross-validation criterion:
+
+(3) $GCV(\lambda)=\frac{\sum_{i=1}^N(y_i - \widehat{f_\lambda}(x_i))^2}{(1-\frac{M(\lambda)}{N})^2}$
+
+Note that "M($\lambda$) is the effective number of parameters in the model: this accounts both for the number of terms in the models, plus the number of parameters used in selecting the optimal positions of the knots."[1]  Our final model is the one that minimizes this generalized cross-validation criterion.  From our perspective the final model would be similar to something we could produce with a GAM (Generalized Additive Model), though the processes as we described above to get the model are quite different.  They are easier to interpret then most non-linear functions of a similar nature, and (critical to our analysis) can handle categorical as well as numerical data.  Though MARS is capable of measuring three dimensional relationships as interactions (note product of two terms in the forward pass), for our analysis we will strictly observe two dimensional splines.   Early checks into including these interaction splines found that they didn't improve our models much, were hard to interpret, and drastically increased computation time (already a bit of an issue). As such we proceed forward with a MARS analysis that will seek to build a model with our chosen covariates, all possible values t and the spines they'd create, and interactions terms on their own that we will define.
+
+# Pokémon Background
+
+A Pokémon is a creature within the fictional world of the video games with extraordinary natural and sometimes supernatural abilities.  Our dataset contains data on the eight hundred and one Pokémon species that were know prior to November 2019.  A “Generation” of Pokémon refers to the games in the series.  The original 151 Pokémon were from the first series of games released in 1993.   When the sequels to those games were released, they introduced an additional one hundred Pokémon.  This pattern continues up until generation 8 with the amount of Pokémon added varying from game to game.  We elect to exclude the most recent generation, as information on that generation has yet to be reliably compiled.  The purpose of the game is both the collection of all available Pokémon, working your way through the story and world with them, and using them in a turn-based battle system against the environment, other players, and computer-controlled opponents.  Pokémon have ‘stats’ that determine their effectiveness in these battles and react with the ‘stats’ of the opposing Pokémon.  Attack deals physical damage and is mitigated by the opposing Pokémon’s defense.  Special attack deals special damage (think flames and electricity) and is mitigated by the opposing Pokémon’s special defense.   Damage is dealt to a Pokémon’s hp (health points) and Pokémon can no longer participate in battle when hp reaches zero.  The final ‘stat’ is speed, the Pokémon with the highest speed attacks first.   These six stats add up to a Pokémon’s “Total Stats” which will be the initial focus of our analysis as we attempt to predict it with the Pokémon’s other characteristics.  Within the games themselves these stats are calculated with the following:
+
+(4) $Stat=[\frac{(2*Base+IV+EV)*level}{100}]*nature+5$
+
+(5) $Stat_{hp}=[\frac{(2*Base+IV+EV)*level}{100}]+level+10$
+
+‘Base’ as listed above are consistent across all Pokémon of the same species.  However, IVs, EVs, nature, and level are characteristics the individual Pokémon is “born” with or can be trained by the player.  As such our focus will only be on the base stat for a Pokémon species.  There are additional characteristics that are consistent across Pokémon species, and we’re using these as our potential covariates.   The only ones related to real world comparisons are height and weight.  Additional characteristics are fictional and will have to be explained.   Understanding these characteristics is not critical to our model as we focus mostly on prediction, however their descriptions will be listed below for those interested:
+
+\underline{Generation}:  As previously mentioned we are observing 8 generations of Pokémon.  Conveniently each generation happens on a different “region” in the game’s fictional world.  As such I’m choosing to include it as a categorical variable as an indicator of the Pokémon species’ region of origin.
+
+\underline{Typing}:  There are 18 Pokémon types that a Pokémon can have.  It is possible for them to have a single type, or two types, but no more then that.  Note figure 2 for the listed types and some examples of Pokémon that fit certain paradigms.  These interact with the attacks a Pokémon can learn which are also typed.  For example, the electric type move thunderbolt will deal two times the damage to a Pokémon with water typing but will only deal half damage to Pokémon with rock typing.  In addition, if the Pokémon that used the move is an electric type it will deal one and a half times more damage.  When a Pokémon has two types, one is listed first; but from a gameplay prospective there is no difference between the two.  Regardless we’ll include the first as “type 1” and the second as “type 2.”  We also create an additional “type 2” as “none” for Pokémon with only a primary typing.
+
+
+\par
+\begin{wrapfigure}[15]{R}[0\width]{6cm}
+\includegraphics[width=0.50\textwidth]{Picture1.png}
+\caption{Pokémon Types}
+\end{wrapfigure}
+
+
+\underline{Legendary Status}:  Some Pokémon are designated as legendary and are designed to have greater stats then normal.  As such we make a binary variable to indicate if a given Pokémon species is legendary.
+
+\underline{Evolution}:  For some Pokémon species; when certain conditions are met, Pokémon can evolve into (usually) strictly better versions of themselves.  To measure this phenomenon, we created a numerical variable.  A fully evolved Pokémon will be three, a Pokémon that can evolve once will be two, and a Pokémon that can evolve two more times will be one.  Like legendaries, there are ‘baby’ Pokémon that are inherently designed to be weaker and must be evolved in order to reach their potential, these are given a 0.
+
+\underline{Base Egg Steps}:  Within the game you can receive eggs that, given time, will hatch into Pokémon.  Time is judged by how many in game steps the player makes, when the threshold is met the egg will hatch.  This is consistent across Pokémon species. 
+
+\underline{Base Happiness}:  Individual Pokémon have happiness levels that increase and decrease dependent on player actions.  However, each species has a baseline level of happiness they begin with. 
+
+\underline{Experience Growth}: Recall in Equation 4 and 5 the “level” component.   This is a value increased as a Pokémon is used in battle.  However, the amount of experience required to increase “level” varies between Pokémon species, typically with stronger Pokémon taking longer to level up.   
+
+\underline{Capture Rate}: There are several in game factors when attempting to capture a 'wild' Pokémon; however each has a default capture rate under the games' baseline conditions. Like experience the capture rate varies between Pokémon species, typically with stronger Pokémon being harder to capture.  
+
+# Data
+
+As previously stated our initial analysis will focus just on base total, the total pool of a Pokémon's stats.  We removed Rotom; the unique ghost/electric type Pokémon from our dataset given their ability to switch forms and stats by possessing real world appliances like refrigerators and lawnmowers.   Some Pokémon also have multiple forms, either through special game mechanics or through regional variants, with different stats being present for each.  We don't wish to include these, however we include the base form only in our study.  The exception to this is mega evolution, which we will discuss at the end of this section.
+
+```{r, include = F}
+defOut <- knitr::knit_hooks$get("plot")  # save the default plot hook 
+knitr::knit_hooks$set(plot = function(x, options) {  # set new plot hook ...
+  x <- defOut(x, options)  # first apply the default hook
+  if(!is.null(options$wrapfigure)) {  # then, if option wrapfigure is given ...
+    # create the new opening string for the wrapfigure environment ...
+    wf <- sprintf("\\begin{wrapfigure}{%s}{%g\\textwidth}", options$wrapfigure[[1]], options$wrapfigure[[2]])
+    x  <- gsub("\\begin{figure}", wf, x, fixed = T)  # and replace the default one with it.
+    x  <- gsub("{figure}", "{wrapfigure}", x, fixed = T)  # also replace the environment ending
+  }
+  return(x)
+})
+```
+
+```{r echo = F, warning = F, message = F, fig.width=7, fig.height = 6, out.width = ".6\\textwidth", fig.cap = "My Flowchart", fig.align="left", wrapfigure = list("R", .7)}
+Pokemon=read.csv("Pokemon.csv")
+Pokemon=Pokemon[Pokemon$Evolution>-1,]
+levels(Pokemon$type2)=c(levels(Pokemon$type2),"none")
+Pokemon$type2[Pokemon$type2==""]="none"
+
+Pokemon_Cor=Pokemon[,c("base_total","weight_kg","height_m","base_happiness","base_egg_steps","experience_growth","Evolution","capture_rate","is_legendary")]
+Pokemon_Cor$generation=as.numeric(Pokemon$generation)
+Pokemon_Cor$is_legendary=as.numeric(Pokemon$is_legendary)
+Pokemon_Cor$capture_rate=Pokemon$capture_rate
+corrplot(cor(Pokemon_Cor))
+```
+
+Note in figure 3 a correlation plot between all of our covariates excluding type, and below a pairs plot (figure 4) of the same with the variables standardized. Note that we have both heavy correlation and apparent linear relationships between several variables.  In addition we note that several of our variables are grouped; experience growth and base happiness has 6 unique values, while egg steps has 10 unique values.  Despite this they are factors where their number has meaning beyond a categorical status, and most appear to be increasing/decreasing as the Pokémon's total stats appear to be increasing.  We initially choose to observe interaction in height and weight, egg steps and happiness, as well as egg steps and legendary status.  Note that legendary status is rare, making up only 9% of our population.  However these are Pokémon essentially designed to be outliers, we hope that this variables helps us balance out this fact.  We'll make note of this again later but happiness did not end up being chosen by MARS, so we removed it's interaction term manually.  Considerations from how the game world is expected operate also led us to observe the interaction between base egg steps and capture rate.  Both are essentially gateways to obtaining a Pokémon, and we'd expect the growth or decline of one to mesh with the other.  Additional research also revealed that the correlation between egg steps and legendary status is artificial.  Legendaries cannot actually have eggs, and those values are placeholders so commercial hacking devices that force the game to generate legendary eggs don't break the game.  In its place we choose to observe the interaction between legendary status and experience growth; a relationship we know should exist as legendaries are purposely made overly difficult to train as a balance on their power.
+
+```{r echo = F, warning = F, message = F, fig.width=6, fig.height = 5, out.width = ".6\\textwidth", fig.cap = "My Flowchart", fig.align="right", wrapfigure = list("R", .7)}
+Pokemon$capture_rate=scale(Pokemon$capture_rate)
+Pokemon$generation=as.factor(Pokemon$generation)
+Pokemon$is_legendary=as.factor(Pokemon$is_legendary)
+Pokemon$percentage_male[is.na(Pokemon$percentage_male)]=0
+Pokemon$base_happiness=c(scale(Pokemon$base_happiness))
+Pokemon$base_egg_steps=c(scale(Pokemon$base_egg_steps))
+Pokemon$experience_growth=c(scale(Pokemon$experience_growth))
+
+Pokemon$weight_kg=c(scale(Pokemon$weight_kg))
+Pokemon$height_m=c(scale(Pokemon$height_m))
+pairs(Pokemon[,c("base_total","weight_kg","height_m","base_happiness","base_egg_steps","experience_growth","Evolution","capture_rate","is_legendary")], lower.panel = panel.smooth)
+#par(op)
+#print("here")
+```
+In figure 5 we view the mean total stats stratified by primary and secondary Pokémon type, with red being the primary typing and the black lines being the secondary typing.  There is a notable difference between both the different typing, and in some cases the effect of the type as a secondary or primary typing.  This justifies looking at the relationship between type one/two and base stats, as well as the interaction between them.  As such our chosen base model is:
+
+(5) $base stats~type1+type2+height m+weight kg+is legendary+experience growth+generation+base egg steps+base egg steps*capture rate+capture rate+type1*type2+height m*weight kg+is legendary*experience growth$
+
+```{r echo = F, warning = F, message = F, fig.width=8, fig.height = 7, out.width = "1\\textwidth", fig.cap = "Total Stats by Type", fig.align="left", wrapfigure = list("R", .7)}
+means<-dplyr::select(Pokemon,c("type1","base_total")) %>%
+group_by(.,type1)%>%
+summarise(.,mean(base_total))
+means2<-dplyr::select(Pokemon,c("type2","base_total")) %>%
+group_by(.,type2)%>%
+summarise(.,mean(base_total))
+
+#op <- par(no.readonly = TRUE)
+#par(mar=c(8, 5, 2, 2) + 0.1)
+plot(means2$type2,means2$`mean(base_total)`,ylim=c(370,530),xlab="type",xaxt="n",ylab="total",main="Total Stats by Type")
+points(means2$type2,c(means$`mean(base_total)`,0),col='red',pch=5)
+axis(1, at=1:nrow(means2)+1, labels=means2$type2, las = 2, cex.axis = 0.8)
+#reset settings
+#par(op)
+```
+
+While observing the data we realized that a handful of Pokémon had higher stats then we'd expect.  In Generation 6 a concept called “Mega-evolution” was introduced.  It allows for a in battle form and stat increase.   I realized that the web-scraping for the dataset (Kaggle sourced) is grabbing these stats instead of the true base stats.  These would have to be manually changed, which is outside the scope and time restraints of this project.  56 out of 801 (5.8%) of Pokémon can mega-evolve, and for the purpose of this analysis we assume these are their "correct" stats.
+
+\clearpage
+
+#'Total Stats' Analysis
+
+We proceed forward with equation 5 as our base model.  For our MARS analysis we use the earth [4] package.  This allows us to perform not only perform our step-wise analysis, it also allows us to perform cross validation within the MARS process.  There are very strong subsets in our data, as such we choose to implement ten-fold cross validation, which we perform fifty times.  We report a $R^2$ of .8620 with a standard deviation of 2.01 across our folds and cross validations.  Table 1 lists our coefficients, while figure 6 shows the splines graphically. It's worth noting that a traditional stepwise produces a $R^2$ of .8135, lower but still good.  However It relies heavily on type over the other variables, likely meaning it is more overfit, where as splines allow us to make similar inferences with the continuous variables.   
+
+```{r echo = F,cache=TRUE}
+set.seed(801)
+model_base_only=earth(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon, nfold=10, ncross=50, varmod.method="lm")
+lmversion=lm(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+generation+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon)
+lmversion_step=step(lmversion,trace=FALSE)
+#summary(lmversion_step)
+Predict_model_base_only=predict(model_base_only,interval="pint")
+
+sum_model=summary(model_base_only)
+#plotmo(model_base_only)
+#plot(model_base_only)
+kable(sum_model$coefficients,caption = "Table 1")
+
+#Pokemon_Complete$Pred_Base_only<-Predict_model_base_only$fit
+```
+
+We have heavy outliers in height and weight, so what we're observing is that for the bulk of our height and weight values we have a normal regression.  But this is completely flattened at a certain point to control for the outliers.  As previously stated happiness was not included, initially the interaction term was however we manually removed it.  There is a small effect if a Pokémon is from generation two, however in general they appear to have no effect.  Legendary status has an extraordinary effect, which we expect, while most typing does not.   Fairy typing is the newest type to be introduced, so that may explain it's positive effect on base stats.  A primary typing of fighting with a secondary typing of none is the only typing effect that is negative, while steel is the only secondary typing that is positive.  The interactions, such as type1steel:type2ghost are pointing to one or only a handful of Pokémon.  They are acting more as controls on these unique Pokémon, but could also bee seen as a symptom of over-fitting.  
+
+```{r echo = F, include=FALSE}
+plotmo(model_base_only)
+#For formatting had to copy image out of R and paste in as a picture, plot mo forces a dataframe print
+```
+\par
+\begin{wrapfigure}[16]{R}[0\width]{10cm}
+\includegraphics[width=1\textwidth]{Graph_spline.png}
+\caption{Base Stats Splines}
+\end{wrapfigure}
+
+Evolution acts as expected, though we see no distinction between baby Pokémon and those at the lowest stage of a three part evolution.  The remaining variables vary and have smaller effects the we might have expected.  Capture rate makes sense as a harder to obtain Pokémon should have higher stats.  Experience growth does initial increase as we'd think it would, but appears to decrease slightly towards our maximum values.  Base egg steps paradoxically does not appear to act as we'd expect, decreasing beyond the standardized average.   Upon further thought Pokémon that evolve have the same base egg steps as their lowest evolution (when a evolved Pokémon has a egg it is of their lowest evolution), so we are likely observing this effect.  
+
+```{r echo = F, warning = F, message = F, fig.width=7, fig.height = 6, out.width = ".6\\textwidth", fig.cap = "Model Diagnostics", fig.align="right", wrapfigure = list("R", .7)}
+
+plot(model_base_only)
+
+```
+
+Our model diagnostics are also quite sound.  The QQ plot has heavy tails, which we expect given the nature of the outlier filled dataset, however the center appears quite normal.  The Residuals vs. fitted appear to qualify our assumption of homosecedasticy by being mostly balanced around a single horizontal line at zero.  As fits the general pattern their are outliers regardless.
+
+```{r echo = F, warning = F, message = F, fig.width=7, fig.height = 6, out.width = "1\\textwidth", fig.cap = "Full Base Results", fig.align="right", wrapfigure = list("R", .7)}
+set.seed(801)
+#Base
+Predict_model_base_total=predict(model_base_only,interval = "pint")
+Pokemon_Complete=Pokemon
+Pokemon_Complete$Pred_base_total=Predict_model_base_total$fit
+#Pokemon_Complete$Pred_base_total=Pokemon_test$base_total
+#Predict_model_base_total_order=Pokemon_test[order(Pokemon_Complete$base_total),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_base_total),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_base_total_order=Predict_model_base_total[order(Pokemon_Complete$Pred_base_total),]
+
+Plot_Base<-ggplot(Pokemon_Complete_order, aes(index, Pred_base_total))+
+    geom_point()+
+    geom_point(aes(y = base_total, colour=ifelse(base_total<Predict_model_base_total_order$lwr |
+                                            base_total>Predict_model_base_total_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_base_total_order$lwr,ymax=Predict_model_base_total_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted base_total")+
+  ylab("base_total") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+Plot_Base
+
+#sum((Pokemon_Complete_order$base_total<Predict_model_base_total_order$lwr |
+#                                            Pokemon_Complete_order$base_total>Predict_model_base_total_order$upr))/nrow(Pokemon_Complete_order)
+
+#Pokemon_Complete_order$name[((Pokemon_Complete_order$base_total>Predict_model_base_total_order$upr ))]
+```
+In figure 8 We have sorted all 800 Pokémon by their predicted base total.  The black line consists of these points, with 95% confidence bands around it.  The colored dots are the true values for those Pokémon, blue if within the confidence bands and red otherwise.  Only 4% of our Pokémon predictions were outside out confidence bands!  Combine this with the good $R^2$ value and we are confident in our models ability to predict the base stats of most Pokémon.  The outliers also tend to be Pokémon like ditto (transforms into other Pokémon) or Magikarp (intentionally weak with a powerful evolution), who have special abilities outside their stats to give them advantages.  A version of this figure with the outlier Pokémon visualized can be found in our final section labeled "Visual Predictions Per Variable and Additional Graphs." 
+\clearpage 
+
+#Full Analysis
+
+\par
+\begin{figure}[!htb]
+\center{\includegraphics[width=\textwidth]{Proposed Process.png}}
+\caption{Proposed Process}
+\end{figure}
+
+We will build off the results of our analysis in the last section in order to build a full model for a fictional scenario.  Let's say, within the world of Pokémon we have all information on generations one through six.  We then discover generation seven and promptly set to categorizing them.  We will treat generations one through six as our training data and generation 7 as our test data in this scenario.  Using MARS we will attempt to predict the stats of these "new" Pokémon as accurately as possible.  Figure nine walks through the pace of this process.  In addition note that each time a stat is confirmed, it will be included in the next model as a possible predictor.  For example if defense is chosen in step 2, then in step 5 it will be included in our model if MARS selects it.  Once the models are build we will use the predict function to build an analysis as in figure 8 to observe the accuracy of our predictions.  Pokémon stats must be at least one.  If any stat is found to be less then one it will be manually changed along with the total to compensate.
+
+```{r,echo = F}
+Cross=50
+```
+
+```{r,echo = F,cache=TRUE}
+#First Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+#Model_base only
+model_base_only_0=earth(base_total~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_base_0=summary(model_base_only_0)
+#paste("Base Stats: ",sum_mod_base_0$rsq)
+
+model_attack_0=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_attack_0=summary(model_attack_0)
+#paste("attack: ",sum_mod_attack_0$rsq)
+
+model_hp_0=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_0=summary(model_hp_0)
+#paste("hp: ",sum_mod_hp_0$rsq)
+
+model_defense_0=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_defense_0=summary(model_defense_0)
+#paste("defense: ",sum_mod_defense_0$rsq)
+
+model_sp_attack_0=earth(sp_attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_attack_0=summary(model_sp_attack_0)
+#paste("sp_attack: ",sum_mod_sp_attack_0$rsq)
+
+model_sp_defense_0=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_defense_0=summary(model_sp_defense_0)
+#paste("sp_defense: ",sum_mod_sp_defense_0$rsq)
+
+model_speed_0=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_0=summary(model_speed_0)
+#paste("speed: ",sum_mod_speed_0$rsq)
+
+stats=c("Base Stats","Attack","HP","Defense","Sp Attack","Sp Defense","Speed")
+R_2_stats=c(sum_mod_base_0$rsq,sum_mod_attack_0$rsq,sum_mod_hp_0$rsq,sum_mod_defense_0$rsq,sum_mod_sp_attack_0$rsq,sum_mod_sp_defense_0$rsq,sum_mod_speed_0$rsq)
+First_models=data.frame(stats,R_2_stats)
+#kable(First_models)
+#Proceed with Base
+```
+
+```{r,echo = F,cache=TRUE}
+#Second Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+model_attack_2=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_attack_2=summary(model_attack_2)
+#paste("attack: ",sum_mod_attack_2$rsq)
+
+model_hp_2=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_2=summary(model_hp_2)
+#paste("hp: ",sum_mod_hp_2$rsq)
+
+model_defense_2=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_defense_2=summary(model_defense_2)
+#paste("defense: ",sum_mod_defense_2$rsq)
+
+model_sp_attack_2=earth(sp_attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_attack_2=summary(model_sp_attack_2)
+#paste("sp_attack: ",sum_mod_sp_attack_2$rsq)
+
+model_sp_defense_2=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_defense_2=summary(model_sp_defense_2)
+#paste("sp_defense: ",sum_mod_sp_defense_2$rsq)
+
+model_speed_2=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_2=summary(model_speed_2)
+#paste("speed: ",sum_mod_speed_2$rsq)
+
+stats=c("Attack","HP","Defense","Sp Attack","Sp Defense","Speed")
+R_2_stats=c(sum_mod_attack_2$rsq,sum_mod_hp_2$rsq,sum_mod_defense_2$rsq,sum_mod_sp_attack_2$rsq,sum_mod_sp_defense_2$rsq,sum_mod_speed_2$rsq)
+Second_models=data.frame(stats,R_2_stats)
+#kable(Second_models)
+#Proceed with special attack
+```
+
+```{r,echo = F}
+#Third Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+model_attack_3=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_attack_3=summary(model_attack_3)
+#paste("attack: ",sum_mod_attack_3$rsq)
+
+model_hp_3=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_3=summary(model_hp_3)
+#paste("hp: ",sum_mod_hp_3$rsq)
+
+model_defense_3=earth(defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_defense_3=summary(model_defense_3)
+#paste("defense: ",sum_mod_defense_3$rsq)
+
+model_sp_defense_3=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_defense_3=summary(model_sp_defense_3)
+#paste("sp_defense: ",sum_mod_sp_defense_3$rsq)
+
+model_speed_3=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_3=summary(model_speed_3)
+#paste("speed: ",sum_mod_speed_3$rsq)
+
+stats=c("Attack","HP","Defense","Sp Defense","Speed")
+R_2_stats=c(sum_mod_attack_3$rsq,sum_mod_hp_3$rsq,sum_mod_defense_3$rsq,sum_mod_sp_defense_3$rsq,sum_mod_speed_3$rsq)
+Third_models=data.frame(stats,R_2_stats)
+#kable(Third_models)
+#Proceed with defense
+```
+
+```{r,echo = F}
+#Fourth Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+model_attack_4=earth(attack~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_attack_4=summary(model_attack_4)
+#paste("attack: ",sum_mod_attack_4$rsq)
+
+model_hp_4=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_4=summary(model_hp_4)
+#paste("hp: ",sum_mod_hp_4$rsq)
+
+model_sp_defense_4=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_defense_4=summary(model_sp_defense_4)
+#paste("sp_defense: ",sum_mod_sp_defense_4$rsq)
+
+model_speed_4=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_4=summary(model_speed_4)
+#paste("speed: ",sum_mod_speed_4$rsq)
+
+stats=c("Attack","HP","Sp Defense","Speed")
+R_2_stats=c(sum_mod_attack_4$rsq,sum_mod_hp_4$rsq,sum_mod_sp_defense_4$rsq,sum_mod_speed_4$rsq)
+Fourth_models=data.frame(stats,R_2_stats)
+#kable(Fourth_models)
+#Proceed with Attack
+```
+
+```{r,echo = F}
+#Fifth Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+model_hp_5=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense+attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_5=summary(model_hp_5)
+#paste("hp: ",sum_mod_hp_5$rsq)
+
+model_sp_defense_5=earth(sp_defense~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense+attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_sp_defense_5=summary(model_sp_defense_5)
+#paste("sp_defense: ",sum_mod_sp_defense_5$rsq)
+
+model_speed_5=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense+attack,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_5=summary(model_speed_5)
+#paste("speed: ",sum_mod_speed_5$rsq)
+
+stats=c("HP","Sp Defense","Speed")
+R_2_stats=c(sum_mod_hp_5$rsq,sum_mod_sp_defense_5$rsq,sum_mod_speed_5$rsq)
+Fifth_models=data.frame(stats,R_2_stats)
+#kable(Fifth_models)
+#Proceed with Special Defense
+```
+
+```{r,echo = F}
+#Sixth Pass, cross=50
+set.seed(801)
+#Without base
+Pokemon_training=Pokemon[Pokemon$generation!=7,]
+Pokemon_test=Pokemon[Pokemon$generation==7,]
+
+model_hp_6=earth(hp~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense+attack+sp_defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_hp_6=summary(model_hp_6)
+#paste("hp: ",sum_mod_hp_6$rsq)
+
+model_speed_6=earth(speed~type1*type2+height_m*weight_kg+is_legendary*experience_growth+capture_rate*base_egg_steps+base_happiness+Evolution+base_total+sp_attack+defense+attack+sp_defense,Pokemon_training, nfold=10, ncross=Cross, varmod.method="lm")
+sum_mod_speed_6=summary(model_speed_6)
+#paste("speed: ",sum_mod_speed_6$rsq)
+
+stats=c("HP","Speed")
+R_2_stats=c(sum_mod_hp_6$rsq,sum_mod_speed_6$rsq)
+Sixth_models=data.frame(stats,R_2_stats)
+#kable(Sixth_models)
+#Proceed with Speed
+```
+
+```{r,echo = F}
+
+set.seed(801)
+
+stats=c("HP")
+R_2_stats=c(sum_mod_hp_6$rsq)
+Seventh_models=data.frame(stats,R_2_stats)
+#kable(Seventh_models)
+#Proceed with Speed
+
+```
+
+```{r,echo = F}
+set.seed(801)
+Predict_model_speed=predict(model_speed_6,Pokemon_test,interval = "pint")
+Pokemon_test$speed=Predict_model_speed$fit
+
+Predict_model_sp_attack=predict(model_sp_attack_2,Pokemon_test,interval = "pint")
+Pokemon_test$sp_attack=Predict_model_sp_attack$fit
+
+Predict_model_defense=predict(model_defense_3,Pokemon_test,interval = "pint")
+Pokemon_test$defense=Predict_model_defense$fit
+
+Predict_model_attack=predict(model_attack_4,Pokemon_test,interval = "pint")
+Pokemon_test$attack=Predict_model_attack$fit
+
+Predict_model_sp_defense=predict(model_sp_defense_5,Pokemon_test,interval = "pint")
+Pokemon_test$sp_defense=Predict_model_sp_defense$fit
+
+Predict_model_hp=predict(model_hp_6,Pokemon_test,interval = "pint")
+Pokemon_test$hp=Predict_model_hp$fit
+
+Pokemon_test$base_total=Pokemon_test$speed+Pokemon_test$sp_attack+Pokemon_test$defense+Pokemon_test$attack+Pokemon_test$sp_defense+Pokemon_test$hp
+
+for(i in 1:length(Pokemon_test$hp)){
+if(Pokemon_test$hp[i]<=0){
+  Pokemon_test$hp[i]=1
+  Pokemon_test$base_total[i]=Pokemon_test$sp_attack[i]+Pokemon_test$defense[i]+Pokemon_test$attack[i]+Pokemon_test$sp_defense[i]+Pokemon_test$speed[i]+Pokemon_test$hp[i]
+}}
+
+for(i in 1:length(Pokemon_test$speed)){
+if(Pokemon_test$speed[i]<=0){
+  Pokemon_test$speed[i]=1
+  Pokemon_test$base_total[i]=Pokemon_test$sp_attack[i]+Pokemon_test$defense[i]+Pokemon_test$attack[i]+Pokemon_test$sp_defense[i]+Pokemon_test$speed[i]+Pokemon_test$hp[i]
+}}
+
+Predict_model_base_total=data.frame(fit=Pokemon_test$base_total)
+
+#Predict_model_speed$upr=Predict_model_base_total$upr-Predict_model_sp_defense$upr-Predict_model_defense$upr-Predict_model_attac#k$upr-Predict_model_hp$upr--Predict_model_sp_attack$upr
+
+#Predict_model_speed$lwr=Predict_model_base_total$lwr-Predict_model_sp_defense$lwr-Predict_model_defense$lwr-Predict_model_attac#k$lwr-Predict_model_hp$lwr--Predict_model_sp_attack$lwr
+ error=qnorm(0.975)*sd(Predict_model_base_total$fit)/sqrt(length(Predict_model_base_total$fit))
+ boot.samples = matrix(sample(Predict_model_base_total$fit, size = 1000 * length(Predict_model_base_total$fit), replace = TRUE),
+ 1000, length(Predict_model_base_total$fit))
+ boot.statistics = apply(boot.samples, 1, mean)
+ base_total.se = sd(boot.statistics)
+ #base_total.se
+ 
+ me = ceiling(10 * 2 * base_total.se)/10
+ 
+for(i in 1:nrow(Predict_model_base_total)){
+ CI=round(Predict_model_base_total$fit[i], 1) + c(-1, 1) * me
+ Predict_model_base_total$upr[i]=CI[2]
+ Predict_model_base_total$lwr[i]=CI[1]
+}
+
+
+
+#Predict_model_speed$upr=Predict_model_speed$fit+error
+#Predict_model_speed$lwr=Predict_model_speed$fit-error
+Pokemon_test_true=Pokemon[Pokemon$generation==7,]
+```
+
+```{r,echo = F}
+oldw <- getOption("warn")
+options(warn = -1)
+
+merge1=merge(First_models,Second_models,by="stats",all=TRUE)
+merge2=merge(merge1,Third_models,by="stats",all=TRUE)
+merge3=merge(merge2,Fourth_models,by="stats",all=TRUE)
+merge4=merge(merge3,Fifth_models,by="stats",all=TRUE)
+merge5=merge(merge4,Sixth_models,by="stats",all=TRUE)
+colnames(merge5)=c("stats","Pass 1","Pass 2","Pass 3","Pass 4","Pass 5","Pass 6")
+merge5$PassKept=c(4,1,3,6,2,5,6)
+
+Precent_not_in_Attack=sum(Pokemon_test_true$attack<Predict_model_attack$lwr | Pokemon_test_true$attack>Predict_model_attack$upr)/nrow(Pokemon_test_true)
+        
+Precent_not_in_Base=sum(Pokemon_test_true$base_total<Predict_model_attack$lwr | Pokemon_test_true$base_total>Predict_model_base_total$upr)/nrow(Pokemon_test_true)
+    
+Precent_not_in_Defense=sum(Pokemon_test_true$defense<Predict_model_defense$lwr | Pokemon_test_true$defense>Predict_model_defense$upr)/nrow(Pokemon_test_true)
+
+Precent_not_in_HP=sum(Pokemon_test_true$hp<Predict_model_hp$lwr | Pokemon_test_true$hp>Predict_model_hp$upr)/nrow(Pokemon_test_true)
+
+Precent_not_in_SP_attack=sum(Pokemon_test_true$sp_attack<Predict_model_sp_attack$lwr | Pokemon_test_true$sp_attack>Predict_model_sp_attack$upr)/nrow(Pokemon_test_true)
+ 
+Precent_not_in_SP_defense=sum(Pokemon_test_true$sp_defense<Predict_model_sp_defense$lwr | Pokemon_test_true$sp_defense>Predict_model_sp_defense$upr)/nrow(Pokemon_test_true)
+
+Precent_not_in_Speed=sum(Pokemon_test_true$speed<Predict_model_speed$lwr | Pokemon_test_true$speed>Predict_model_speed$upr)/nrow(Pokemon_test_true)
+
+merge5$PercentError=c(Precent_not_in_Attack,Precent_not_in_Base,Precent_not_in_Defense,Precent_not_in_HP,Precent_not_in_SP_attack,Precent_not_in_SP_defense,Precent_not_in_Speed)*100
+                               
+kable(merge5,caption = "Process Results")
+
+total_error=sum((Pokemon_test_true$attack<Predict_model_attack$lwr | Pokemon_test_true$attack>Predict_model_attack$upr) |
+(Pokemon_test_true$base_total<Predict_model_base_total$lwr | Pokemon_test_true$base_total>Predict_model_base_total$upr) |
+(Pokemon_test_true$defense<Predict_model_defense$lwr | Pokemon_test_true$defense>Predict_model_defense$upr) |
+(Pokemon_test_true$hp<Predict_model_hp$lwr | Pokemon_test_true$hp>Predict_model_hp$upr) |
+(Pokemon_test_true$sp_attack<Predict_model_sp_attack$lwr | Pokemon_test_true$sp_attack>Predict_model_sp_attack$upr) |
+(Pokemon_test_true$sp_defense<Predict_model_sp_defense$lwr | Pokemon_test_true$sp_defense>Predict_model_sp_defense$upr) |
+(Pokemon_test_true$speed<Predict_model_speed$lwr | Pokemon_test_true$speed>Predict_model_speed$upr))
+
+options(warn = oldw)
+```
+
+In table 2 we outline going through our proposed process and the results we obtained.  "PassKept" refers to the point in our process when we accepted a model, and percent error is the amount of Pokémon whose true stat is within our confidence bands.  This is graphically represented in the section labeled "Visual Predictions Per Variable and Additional Graphs" after our conclusion.  Initially our process was different, in our first attempt we excluded base stats until the end.  However as can be seen in the pass 1 column without base stats out predictive power is very low on our other models.  Once it is incorporated into our models in pass 2 there is a increase across the board in our $R^2$ values.  In our second attempt we did not recalculate our base stats at the end, instead whichever model was not chosen in pass 6 was calculated though subtraction of all other stats from base stat.  Unfortunately this variable ended up having unacceptable percent error," as high as 90%.  So while we now calculate base stats first, we recalculate it at the end.  It has a higher percent error this way (it was previously about 6%), but it is much lower then the approximately 90% error we were getting on our calculated statistic before. 
+
+#Conclusion
+
+Ultimately we were able to make a good model to predict a Pokémon's base stats, and a acceptable method to predict all of their stats.  Ideally we'd have the data on the full new generation, released in November of 2019, however that data is not yet available from our source.  The web-scraping of this sort of data is beyond the scope and timeline of this project, as would fixing the mega-evolution problem previously mentioned.  Regardless we have presented the MARS method, and found success in it.  If a research suspects the inclusion of splines may aid their research, MARS (and the EARTH function) provide a simple and interpretable way to do so.
+
+#Visual Predictions Per Varaible and Additional Graphs
+
+Note the results of our first analysis with the outlier Pokemon visualized:
+
+\par
+\begin{figure}[!htb]
+\center{\includegraphics[width=\textwidth]{Full Graph.png}}
+\caption{Proposed Process}
+\end{figure}
+
+Given the scope of our full analysis we list the graphs showcasing our predictions here in their own separate section.
+
+```{r,echo = F}
+set.seed(801)
+#Base
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_base_total=Pokemon_test$base_total
+#Pokemon_Complete$Pred_base_total=Pokemon_test$base_total
+#Predict_model_base_total_order=Pokemon_test[order(Pokemon_Complete$base_total),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_base_total),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_base_total_order=Predict_model_base_total[order(Pokemon_Complete$Pred_base_total),]
+
+Plot_Base<-ggplot(Pokemon_Complete_order, aes(index, Pred_base_total))+
+    geom_point()+
+    geom_point(aes(y = base_total, colour=ifelse(base_total<Predict_model_base_total_order$lwr |
+                                            base_total>Predict_model_base_total_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_base_total_order$lwr,ymax=Predict_model_base_total_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted base_total")+
+  ylab("base_total") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#SP attack
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_sp_attack=Pokemon_test$sp_attack
+Predict_model_sp_attack_order=Pokemon_test[order(Pokemon_Complete$sp_attack),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_sp_attack),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_sp_attack_order=Predict_model_sp_attack[order(Pokemon_Complete$Pred_sp_attack),]
+
+Plot_SpAttack<-ggplot(Pokemon_Complete_order, aes(index, Pred_sp_attack))+
+    geom_point()+
+    geom_point(aes(y = sp_attack, colour=ifelse(sp_attack<Predict_model_sp_attack_order$lwr |
+                                            sp_attack>Predict_model_sp_attack_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_sp_attack_order$lwr,ymax=Predict_model_sp_attack_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted sp_attack")+
+  ylab("sp_attack") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#Speed
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_speed=Pokemon_test$speed
+Predict_model_speed_order=Pokemon_test[order(Pokemon_Complete$speed),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_speed),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_speed_order=Predict_model_speed[order(Pokemon_Complete$Pred_speed),]
+
+Plot_Speed<-ggplot(Pokemon_Complete_order, aes(index, Pred_speed))+
+    geom_point()+
+    geom_point(aes(y = speed, colour=ifelse(speed<Predict_model_speed_order$lwr |
+                                            speed>Predict_model_speed_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_speed_order$lwr,ymax=Predict_model_speed_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted speed")+
+  ylab("speed") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#hp
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_hp=Pokemon_test$hp
+Predict_model_hp_order=Pokemon_test[order(Pokemon_Complete$hp),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_hp),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_hp_order=Predict_model_hp[order(Pokemon_Complete$Pred_hp),]
+
+Plot_hp<-ggplot(Pokemon_Complete_order, aes(index, Pred_hp))+
+    geom_point()+
+    geom_point(aes(y = hp, colour=ifelse(hp<Predict_model_hp_order$lwr |
+                                            hp>Predict_model_hp_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_hp_order$lwr,ymax=Predict_model_hp_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted hp")+
+  ylab("hp") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#attack
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_attack=Pokemon_test$attack
+Predict_model_attack_order=Pokemon_test[order(Pokemon_Complete$attack),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_attack),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_attack_order=Predict_model_attack[order(Pokemon_Complete$Pred_attack),]
+
+Plot_attack<-ggplot(Pokemon_Complete_order, aes(index, Pred_attack))+
+    geom_point()+
+    geom_point(aes(y = attack, colour=ifelse(attack<Predict_model_attack_order$lwr |
+                                            attack>Predict_model_attack_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_attack_order$lwr,ymax=Predict_model_attack_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted attack")+
+  ylab("attack") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#defense
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_defense=Pokemon_test$defense
+Predict_model_defense_order=Pokemon_test[order(Pokemon_Complete$defense),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_defense),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_defense_order=Predict_model_defense[order(Pokemon_Complete$Pred_defense),]
+
+Plot_defense<-ggplot(Pokemon_Complete_order, aes(index, Pred_defense))+
+    geom_point()+
+    geom_point(aes(y = defense, colour=ifelse(defense<Predict_model_defense_order$lwr |
+                                            defense>Predict_model_defense_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_defense_order$lwr,ymax=Predict_model_defense_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted defense")+
+  ylab("defense") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#sp_defense
+Pokemon_Complete=Pokemon_test_true
+Pokemon_Complete$Pred_sp_defense=Pokemon_test$sp_defense
+Predict_model_sp_defense_order=Pokemon_test[order(Pokemon_Complete$sp_defense),]
+Pokemon_Complete_order=Pokemon_Complete[order(Pokemon_Complete$Pred_sp_defense),]
+Pokemon_Complete_order$index=seq(1:nrow(Pokemon_Complete_order))
+Predict_model_sp_defense_order=Predict_model_sp_defense[order(Pokemon_Complete$Pred_sp_defense),]
+
+Plot_sp_defense<-ggplot(Pokemon_Complete_order, aes(index, Pred_sp_defense))+
+    geom_point()+
+    geom_point(aes(y = sp_defense, colour=ifelse(sp_defense<Predict_model_sp_defense_order$lwr |
+                                            sp_defense>Predict_model_sp_defense_order$upr,"orange","red")))+
+    geom_line(data=Pokemon_Complete_order)+
+    geom_ribbon(aes(ymin=Predict_model_sp_defense_order$lwr,ymax=Predict_model_sp_defense_order$upr),alpha=0.3) +xlab("Pokemon sorted by Predicted sp_defense")+
+  ylab("sp_defense") + ggtitle("Predictions and True Values") + theme(legend.position = "none")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#grid.arrange(Plot_attack,Plot_defense,Plot_hp, Plot_Speed, Plot_SpAttack,Plot_sp_defense,Plot_Base, ncol=2)
+
+Plot_attack
+
+Plot_defense
+
+Plot_hp
+
+Plot_Speed
+
+Plot_SpAttack
+
+Plot_sp_defense
+
+Plot_Base
+```
+Additonally we include the corelation for all 800 Pokémon's base stats:
+
+```{r, echo = F}
+Pokemon=read.csv("Pokemon.csv")
+Pokemon=Pokemon[Pokemon$Evolution>-1,]
+levels(Pokemon$type2)=c(levels(Pokemon$type2),"none")
+Pokemon$type2[Pokemon$type2==""]="none"
+
+Pokemon_Cor=Pokemon[,c("base_total","attack","sp_attack","defense","sp_defense","hp","speed")]
+corrplot(cor(Pokemon_Cor))
+```
+
+#Refrences
+
+[1] Hastie, Trevor,, Robert Tibshirani, and J. H Friedman. The Elements of Statistical Learning: Data Mining, Inference, and Prediction. 2nd ed. New York: Springer, 2009. Print.
+
+[2] Data via: https://www.kaggle.com/rounakbanik/pokemon web scraped from https://www.serebii.net/
+
+[3] © 2019 Pokémon. © 1995–2019 Nintendo/Creatures Inc./GAME FREAK inc. Pokémon, Pokémon character names, Nintendo Switch, Nintendo 3DS, Nintendo DS, Wii, Wii U, and WiiWare are trademarks of Nintendo. The YouTube logo is a trademark of Google Inc. Other trademarks are the property of their respective owners.
+
+[4] https://cran.r-project.org/web/packages/earth/index.html
